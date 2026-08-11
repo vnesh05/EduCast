@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+client/node_modules/
+server/node_modules/
+**/node_modules/
+
+# Local Environment Variables & Secrets
+.env
+.env.local
+server/.env
+
+# Uploaded VOD Media Files
+server/uploads/recordings/*
+!server/uploads/recordings/.gitkeep
+
+# Local SQLite Database
+server/prisma/*.db
+server/prisma/*.db-journal
+
+# Build outputs
+dist/
+client/dist/
+build/
+.DS_Store
