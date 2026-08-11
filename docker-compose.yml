@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: classhub-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: classhub_admin
+      POSTGRES_PASSWORD: supersecure_password_2026
+      POSTGRES_DB: classhub
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: classhub-server
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      PORT: 5000
+      DATABASE_URL: "postgresql://classhub_admin:supersecure_password_2026@postgres:5432/classhub?schema=public"
+      JWT_ACCESS_SECRET: "classhub_prod_access_secret_2026"
+      JWT_REFRESH_SECRET: "classhub_prod_refresh_secret_2026"
+      CORS_ORIGIN: "http://localhost"
+    depends_on:
+      - postgres
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: classhub-client
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - server
+
+volumes:
+  postgres_data:
