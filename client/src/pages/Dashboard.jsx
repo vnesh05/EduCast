@@ -12,7 +12,8 @@ import {
   BookOpen, 
   ArrowRight, 
   AlertCircle, 
-  Sparkles 
+  Sparkles,
+  UserCheck
 } from 'lucide-react';
 
 export function Dashboard({ onSelectClass }) {
@@ -77,15 +78,18 @@ export function Dashboard({ onSelectClass }) {
     setFormError('');
     setFormSubmitting(true);
     try {
-      await apiRequest('/api/classes/join', {
+      const res = await apiRequest('/api/classes/join', {
         method: 'POST',
         body: JSON.stringify({ code: joinCode })
       });
       setJoinCode('');
       setIsJoinOpen(false);
       fetchClasses();
+      if (res.message) {
+        alert(res.message);
+      }
     } catch (err) {
-      setFormError(err.message || 'Failed to join class');
+      setFormError(err.message || 'Failed to submit registration request');
     } finally {
       setFormSubmitting(false);
     }
@@ -208,90 +212,163 @@ export function Dashboard({ onSelectClass }) {
         gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
         gap: '24px'
       }}>
-        {classes.map((cls) => (
-          <div 
-            key={cls.id}
-            onClick={() => onSelectClass(cls.id)}
-            className="glass-panel animate-fade-in"
-            style={{
-              padding: '24px',
-              cursor: 'pointer',
-              transition: 'all 0.25s ease',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
-              position: 'relative',
-              overflow: 'hidden'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'translateY(-4px)';
-              e.currentTarget.style.borderColor = 'var(--accent-primary)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)';
-              e.currentTarget.style.borderColor = 'var(--glass-border)';
-            }}
-          >
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#fff' }}>{cls.title}</h3>
-                
-                {/* Join Code Badge for Instructor */}
-                {user?.role === 'INSTRUCTOR' && (
-                  <button 
-                    onClick={(e) => copyCode(cls.code, e)}
-                    className="code-pill"
-                    title="Click to copy join code"
-                  >
-                    <span>{cls.code}</span>
-                    {copiedCode === cls.code ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
-                  </button>
+        {classes.map((cls) => {
+          const isPending = user?.role === 'STUDENT' && cls.enrollmentStatus === 'PENDING';
+          const isRejected = user?.role === 'STUDENT' && cls.enrollmentStatus === 'REJECTED';
+
+          const handleClick = () => {
+            if (isPending) {
+              alert('Your course registration is currently awaiting instructor approval. Once approved, you will have full access to this class.');
+              return;
+            }
+            if (isRejected) {
+              alert('Your course registration request was declined by the instructor.');
+              return;
+            }
+            onSelectClass(cls.id);
+          };
+
+          return (
+            <div 
+              key={cls.id}
+              onClick={handleClick}
+              className="glass-panel animate-fade-in"
+              style={{
+                padding: '24px',
+                cursor: isPending ? 'not-allowed' : 'pointer',
+                opacity: isPending ? 0.85 : 1,
+                transition: 'all 0.25s ease',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                position: 'relative',
+                overflow: 'hidden'
+              }}
+              onMouseEnter={(e) => {
+                if (!isPending) {
+                  e.currentTarget.style.transform = 'translateY(-4px)';
+                  e.currentTarget.style.borderColor = 'var(--accent-primary)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!isPending) {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.borderColor = 'var(--glass-border)';
+                }
+              }}
+            >
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px', gap: '8px', flexWrap: 'wrap' }}>
+                  <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#fff' }}>{cls.title}</h3>
+                  
+                  {/* Pending Approval Badge for Student */}
+                  {isPending && (
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      background: 'rgba(245, 158, 11, 0.15)',
+                      color: '#f59e0b',
+                      border: '1px solid rgba(245, 158, 11, 0.3)',
+                      padding: '3px 10px',
+                      borderRadius: '12px',
+                      fontSize: '0.75rem',
+                      fontWeight: 600
+                    }}>
+                      ⏳ Pending Approval
+                    </span>
+                  )}
+
+                  {/* Pending Requests Badge for Instructor */}
+                  {user?.role === 'INSTRUCTOR' && (cls.pendingRequestsCount > 0) && (
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      background: 'rgba(99, 102, 241, 0.2)',
+                      color: '#a5b4fc',
+                      border: '1px solid rgba(99, 102, 241, 0.4)',
+                      padding: '3px 10px',
+                      borderRadius: '12px',
+                      fontSize: '0.75rem',
+                      fontWeight: 600
+                    }}>
+                      🔔 {cls.pendingRequestsCount} Request{cls.pendingRequestsCount > 1 ? 's' : ''}
+                    </span>
+                  )}
+
+                  {/* Join Code Badge for Instructor */}
+                  {user?.role === 'INSTRUCTOR' && (
+                    <button 
+                      onClick={(e) => copyCode(cls.code, e)}
+                      className="code-pill"
+                      title="Click to copy join code"
+                    >
+                      <span>{cls.code}</span>
+                      {copiedCode === cls.code ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
+                    </button>
+                  )}
+                </div>
+
+                {cls.description && (
+                  <p style={{
+                    color: 'var(--text-muted)',
+                    fontSize: '0.875rem',
+                    lineHeight: '1.5',
+                    marginBottom: '20px',
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden'
+                  }}>
+                    {cls.description}
+                  </p>
                 )}
               </div>
 
-              {cls.description && (
-                <p style={{
-                  color: 'var(--text-muted)',
-                  fontSize: '0.875rem',
-                  lineHeight: '1.5',
-                  marginBottom: '20px',
-                  display: '-webkit-box',
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: 'vertical',
-                  overflow: 'hidden'
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                paddingTop: '16px',
+                borderTop: '1px solid var(--border-color)',
+                marginTop: '16px',
+                fontSize: '0.85rem',
+                color: 'var(--text-muted)'
+              }}>
+                <div style={{ display: 'flex', gap: '16px' }}>
+                  {user?.role === 'INSTRUCTOR' ? (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Users size={15} color="var(--accent-primary)" />
+                      {cls._count?.enrollments || 0} Students
+                    </span>
+                  ) : (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <UserCheck size={15} color="var(--accent-primary)" />
+                      {cls.instructor?.name}
+                    </span>
+                  )}
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Video size={15} color="#10b981" />
+                    {cls._count?.sessions || 0} Sessions
+                  </span>
+                </div>
+
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  color: isPending ? '#f59e0b' : 'var(--accent-primary)',
+                  fontWeight: 600
                 }}>
-                  {cls.description}
-                </p>
-              )}
-            </div>
-
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingTop: '16px',
-              borderTop: '1px solid var(--border-color)',
-              marginTop: '16px',
-              fontSize: '0.85rem',
-              color: 'var(--text-muted)'
-            }}>
-              <div style={{ display: 'flex', gap: '16px' }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <Users size={15} color="var(--accent-primary)" />
-                  {cls._count?.enrollments || 0} Students
-                </span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <Video size={15} color="#10b981" />
-                  {cls._count?.sessions || 0} {cls._count?.sessions === 1 ? 'VOD' : 'VODs'}
-                </span>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--accent-primary)', fontWeight: 600 }}>
-                Open <ArrowRight size={16} />
+                  {isPending ? 'Pending Approval' : (
+                    <>Open <ArrowRight size={16} /></>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Modal: Create Class (Instructor) */}

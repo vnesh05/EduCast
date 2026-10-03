@@ -14,15 +14,16 @@ import {
   MessageSquare, 
   Radio, 
   ShieldAlert, 
-  RefreshCw,
-  Film,
-  Disc
+  RefreshCw
 } from 'lucide-react';
 
 const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' }
   ]
 };
 
@@ -38,14 +39,7 @@ export function LiveSession({ sessionId, onLeave }) {
   const [isMicOn, setIsMicOn] = useState(true);
   const [isVideoOn, setIsVideoOn] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
-
-  // VOD Recording States
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingSec, setRecordingSec] = useState(0);
-  const [isUploadingVod, setIsUploadingVod] = useState(false);
-  const mediaRecorderRef = useRef(null);
-  const recordedChunksRef = useRef([]);
-  const recordingTimerRef = useRef(null);
+  const [isStudentMuted, setIsStudentMuted] = useState(false);
 
   // Chat & Socket States
   const [messages, setMessages] = useState([]);
@@ -60,132 +54,11 @@ export function LiveSession({ sessionId, onLeave }) {
   const socketRef = useRef(null);
   const peerConnectionsRef = useRef({}); // socketId -> RTCPeerConnection
   const localStreamRef = useRef(null);
+  const remoteStreamRef = useRef(null);
   const pendingCandidatesRef = useRef({}); // socketId -> RTCIceCandidate[]
 
-  // Timer tick during recording
-  useEffect(() => {
-    if (isRecording) {
-      recordingTimerRef.current = setInterval(() => {
-        setRecordingSec(prev => prev + 1);
-      }, 1000);
-    } else {
-      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
-    }
-    return () => {
-      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
-    };
-  }, [isRecording]);
-
-  const formatTimer = (totalSeconds) => {
-    const mins = Math.floor(totalSeconds / 60);
-    const secs = totalSeconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const uploadVodBlob = async (blob, durationSec) => {
-    setIsUploadingVod(true);
-    try {
-      const token = localStorage.getItem('classhub_access_token');
-      const formData = new FormData();
-      formData.append('video', blob, `session-${sessionId}-${Date.now()}.webm`);
-      formData.append('durationSec', durationSec || 1);
-
-      const res = await fetch(`/api/sessions/${sessionId}/recordings`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
-        body: formData
-      });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || 'Failed to upload VOD recording');
-      }
-
-      return true;
-    } catch (err) {
-      console.error('VOD upload error:', err);
-      return false;
-    } finally {
-      setIsUploadingVod(false);
-    }
-  };
-
-  const startRecordingStream = (customStream) => {
-    const stream = customStream || localStreamRef.current || localStream;
-    if (!stream) {
-      console.warn('Local media stream is not active to record.');
-      return false;
-    }
-
-    try {
-      recordedChunksRef.current = [];
-      let options;
-      if (typeof MediaRecorder.isTypeSupported === 'function') {
-        if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')) {
-          options = { mimeType: 'video/webm;codecs=vp8,opus' };
-        } else if (MediaRecorder.isTypeSupported('video/webm')) {
-          options = { mimeType: 'video/webm' };
-        }
-      }
-
-      let recorder;
-      try {
-        recorder = options ? new MediaRecorder(stream, options) : new MediaRecorder(stream);
-      } catch (e) {
-        recorder = new MediaRecorder(stream);
-      }
-
-      recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          recordedChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorderRef.current = recorder;
-      recorder.start(); // Continuous smooth recording without timeslices to ensure clear audio sync
-      setIsRecording(true);
-      setRecordingSec(0);
-      return true;
-    } catch (err) {
-      console.error('Failed to start MediaRecorder:', err);
-      return false;
-    }
-  };
-
-  const stopRecordingStream = () => {
-    return new Promise((resolve) => {
-      const recorder = mediaRecorderRef.current;
-      if (!recorder || recorder.state === 'inactive') {
-        setIsRecording(false);
-        resolve(null);
-        return;
-      }
-
-      recorder.onstop = () => {
-        setIsRecording(false);
-        const mime = recorder.mimeType || 'video/webm';
-        const blob = new Blob(recordedChunksRef.current, { type: mime });
-        resolve(blob);
-      };
-
-      try {
-        recorder.stop();
-      } catch (e) {
-        setIsRecording(false);
-        resolve(null);
-      }
-    });
-  };
-
   const stopAllMediaTracks = () => {
-    // 1. Stop MediaRecorder if running
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      try { mediaRecorderRef.current.stop(); } catch (e) {}
-    }
-
-    // 2. Unbind video elements and stop hardware tracks
+    // 1. Unbind video elements and stop hardware tracks
     if (localVideoRef.current) {
       if (localVideoRef.current.srcObject) {
         const s = localVideoRef.current.srcObject;
@@ -202,7 +75,7 @@ export function LiveSession({ sessionId, onLeave }) {
       remoteVideoRef.current.srcObject = null;
     }
 
-    // 3. Stop local stream tracks explicitly
+    // 2. Stop local stream tracks explicitly
     const stream = localStreamRef.current || localStream;
     if (stream && stream.getTracks) {
       stream.getTracks().forEach(track => {
@@ -216,54 +89,60 @@ export function LiveSession({ sessionId, onLeave }) {
     setLocalStream(null);
   };
 
-  const handleEndSessionAndSaveVod = async () => {
+  const handleEndSession = async () => {
     try {
-      setIsUploadingVod(true);
-      let blob = null;
-      let duration = recordingSec;
-
-      if (isRecording) {
-        blob = await stopRecordingStream();
-      }
-
-      if (blob && blob.size > 0) {
-        await uploadVodBlob(blob, duration);
-      }
-
       stopAllMediaTracks();
       await apiRequest(`/api/sessions/${sessionId}/end`, { method: 'POST' });
       if (onLeave) onLeave();
     } catch (err) {
       alert(err.message || 'Failed to end session');
-    } finally {
-      setIsUploadingVod(false);
     }
   };
 
-  // Auto-play remote stream on video element when received
+  // Auto-play remote stream on video element when received with autoplay policy fallback
   useEffect(() => {
     if (remoteStream && remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = remoteStream;
-      remoteVideoRef.current.play().catch((err) => console.log('Autoplay play error:', err));
+      remoteVideoRef.current.play().catch((err) => {
+        console.warn('Autoplay prevented in useEffect, muting to allow instant playback:', err);
+        setIsStudentMuted(true);
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.muted = true;
+          remoteVideoRef.current.play().catch(e => console.error('Play retry error:', e));
+        }
+      });
     }
   }, [remoteStream]);
 
-  // Load Session Info & History Chat
+  // Load Session Info & History Chat with cancellation and deduplication
   useEffect(() => {
+    let active = true;
     async function initSession() {
       try {
         const sessionRes = await apiRequest(`/api/sessions/${sessionId}`);
+        if (!active) return;
         setSession(sessionRes.session);
 
         const chatRes = await apiRequest(`/api/sessions/${sessionId}/chat`);
-        setMessages(chatRes.messages || []);
+        if (!active) return;
+        if (chatRes.messages) {
+          setMessages(prev => {
+            const map = new Map();
+            chatRes.messages.forEach(m => map.set(m.id, m));
+            prev.forEach(m => map.set(m.id, m));
+            return Array.from(map.values()).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+          });
+        }
       } catch (err) {
-        setError(err.message || 'Failed to load session');
+        if (active) setError(err.message || 'Failed to load session');
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     }
     initSession();
+    return () => {
+      active = false;
+    };
   }, [sessionId]);
 
   // Student Attendance & Watch-Time Tracking
@@ -300,39 +179,98 @@ export function LiveSession({ sessionId, onLeave }) {
       delete pendingCandidatesRef.current[socketId];
       for (const candidate of candidates) {
         try {
-          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+          if (candidate && (candidate.candidate || candidate.sdpMid !== undefined)) {
+            await pc.addIceCandidate(candidate);
+          }
         } catch (err) {
-          console.error('Error adding queued ICE candidate:', err);
+          console.warn('Queued ICE candidate warning:', err);
         }
       }
     }
   };
 
+  // Helper for student to explicitly request or re-request live stream from instructor
+  const handleRequestStream = () => {
+    if (socketRef.current && !session?.isInstructor) {
+      console.log('🔄 Requesting instructor live stream from room...');
+      socketRef.current.emit('request-stream', { sessionId });
+    }
+  };
+
+  // Student auto-retry: If connected and stream not received after 2.5 seconds, ping for stream
+  useEffect(() => {
+    if (session && !session.isInstructor && !remoteStream && connectionState === 'connected') {
+      const timer = setTimeout(() => {
+        handleRequestStream();
+      }, 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [session, remoteStream, connectionState]);
+
   // Initialize Media Stream & Socket Signaling Connection
   useEffect(() => {
     if (!session) return;
 
+    let isCancelled = false;
     let localMediaStream = null;
+    let socketInstance = null;
     const token = localStorage.getItem('classhub_access_token');
 
     async function startMediaAndSocket() {
-      try {
-        // If Instructor, capture local webcam/mic and auto-start recording
-        if (session.isInstructor) {
+      // 1. If Instructor, capture local webcam/mic with graceful fallback
+      if (session.isInstructor) {
+        try {
           localMediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        } catch (mediaErr) {
+          console.warn('Could not acquire both video and audio, falling back to video only or audio only:', mediaErr);
+          try {
+            localMediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          } catch (vErr) {
+            try {
+              localMediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            } catch (aErr) {
+              console.warn('Could not access camera or microphone:', aErr);
+            }
+          }
+        }
+
+        // If unmounted or cancelled while awaiting media stream, stop tracks and abort immediately!
+        if (isCancelled) {
+          if (localMediaStream) {
+            localMediaStream.getTracks().forEach(track => {
+              try { track.stop(); } catch (e) {}
+            });
+          }
+          return;
+        }
+
+        if (localMediaStream) {
           setLocalStream(localMediaStream);
           localStreamRef.current = localMediaStream;
           if (localVideoRef.current) {
             localVideoRef.current.srcObject = localMediaStream;
           }
-          // Auto-start stream recording for instant VOD creation
-          setTimeout(() => {
-            startRecordingStream(localMediaStream);
-          }, 500);
         }
+      }
 
-        // Initialize Socket.IO connection (target backend explicitly or fallback to proxy)
-        const socketUrl = import.meta.env.VITE_SOCKET_URL || (window.location.hostname === 'localhost' ? 'http://localhost:5000' : window.location.origin);
+      if (isCancelled) return;
+
+      // Disconnect any lingering socket from a previous render
+      if (socketRef.current) {
+        try {
+          socketRef.current.off('receive-chat');
+          socketRef.current.disconnect();
+          socketRef.current = null;
+        } catch (e) {}
+      }
+
+      // 2. Initialize Socket.IO Signaling Connection
+      try {
+        const socketUrl = import.meta.env.VITE_SOCKET_URL || 
+          (window.location.port === '5173' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+            ? 'http://localhost:5000' 
+            : window.location.origin);
+
         const socket = io(socketUrl, {
           auth: { token },
           transports: ['websocket', 'polling'],
@@ -340,11 +278,20 @@ export function LiveSession({ sessionId, onLeave }) {
           reconnectionAttempts: 10,
           reconnectionDelay: 1000
         });
+        socketInstance = socket;
         socketRef.current = socket;
 
         socket.on('connect', () => {
+          if (isCancelled) {
+            socket.disconnect();
+            return;
+          }
           setConnectionState('connected');
           socket.emit('join-room', { sessionId });
+          // If Student, request live stream immediately upon connection
+          if (!session.isInstructor) {
+            socket.emit('request-stream', { sessionId });
+          }
         });
 
         socket.on('connect_error', (err) => {
@@ -364,7 +311,7 @@ export function LiveSession({ sessionId, onLeave }) {
           }
         });
 
-        // Broadcast notification when live session is ended by instructor reload or disconnect
+        // Broadcast notification when live session is ended by instructor
         socket.on('session-ended', ({ reason }) => {
           stopAllMediaTracks();
           if (onLeave) onLeave();
@@ -375,7 +322,9 @@ export function LiveSession({ sessionId, onLeave }) {
           setConnectedPeersCount(peers.length + 1);
           if (session.isInstructor) {
             const stream = localStreamRef.current || localMediaStream;
-            peers.forEach(peer => createPeerConnection(peer.socketId, stream));
+            if (stream) {
+              peers.forEach(peer => createPeerConnection(peer.socketId, stream));
+            }
           }
         });
 
@@ -383,37 +332,64 @@ export function LiveSession({ sessionId, onLeave }) {
         socket.on('user-joined', ({ socketId }) => {
           if (session.isInstructor) {
             const stream = localStreamRef.current || localMediaStream;
-            createPeerConnection(socketId, stream);
+            if (stream) {
+              createPeerConnection(socketId, stream);
+            }
+          }
+        });
+
+        // Student Requests Stream from Instructor
+        socket.on('request-stream', ({ studentSocketId }) => {
+          if (session.isInstructor) {
+            console.log('📡 Instructor received request-stream from student:', studentSocketId);
+            const stream = localStreamRef.current || localMediaStream;
+            if (stream) {
+              createPeerConnection(studentSocketId, stream);
+            }
           }
         });
 
         // Receive SDP Offer (Student side)
         socket.on('receive-offer', async ({ senderSocketId, sdp }) => {
-          const pc = createStudentPeerConnection(senderSocketId);
-          await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-          await processPendingCandidates(senderSocketId, pc);
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          socket.emit('signal-answer', { targetSocketId: senderSocketId, sdp: answer });
+          try {
+            console.log('📥 Student received SDP offer from instructor:', senderSocketId);
+            const pc = createStudentPeerConnection(senderSocketId);
+            await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+            await processPendingCandidates(senderSocketId, pc);
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            socket.emit('signal-answer', { targetSocketId: senderSocketId, sdp: answer });
+            console.log('📤 Student sent SDP answer to instructor');
+          } catch (offerErr) {
+            console.error('Error handling received offer:', offerErr);
+          }
         });
 
         // Receive SDP Answer (Instructor side)
         socket.on('receive-answer', async ({ senderSocketId, sdp }) => {
-          const pc = peerConnectionsRef.current[senderSocketId];
-          if (pc) {
-            await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-            await processPendingCandidates(senderSocketId, pc);
+          try {
+            console.log('📥 Instructor received SDP answer from student:', senderSocketId);
+            const pc = peerConnectionsRef.current[senderSocketId];
+            if (pc) {
+              await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+              await processPendingCandidates(senderSocketId, pc);
+            }
+          } catch (ansErr) {
+            console.error('Error handling received answer:', ansErr);
           }
         });
 
         // Receive ICE Candidate
         socket.on('receive-candidate', async ({ senderSocketId, candidate }) => {
+          if (!candidate) return;
           const pc = peerConnectionsRef.current[senderSocketId];
           if (pc && pc.remoteDescription && pc.remoteDescription.type) {
             try {
-              await pc.addIceCandidate(new RTCIceCandidate(candidate));
+              if (candidate.candidate || candidate.sdpMid !== undefined) {
+                await pc.addIceCandidate(candidate);
+              }
             } catch (e) {
-              console.error('Error adding ICE candidate:', e);
+              console.warn('Error adding ICE candidate:', e);
             }
           } else {
             if (!pendingCandidatesRef.current[senderSocketId]) {
@@ -423,9 +399,15 @@ export function LiveSession({ sessionId, onLeave }) {
           }
         });
 
-        // Real-Time Chat Received
+        // Real-Time Chat Received (with strict ID deduplication)
         socket.on('receive-chat', (newMsg) => {
-          setMessages(prev => [...prev, newMsg]);
+          if (!newMsg || !newMsg.id) return;
+          setMessages(prev => {
+            if (prev.some(m => m.id === newMsg.id)) {
+              return prev; // Ignore duplicate
+            }
+            return [...prev, newMsg];
+          });
         });
 
         // User Disconnected
@@ -447,7 +429,16 @@ export function LiveSession({ sessionId, onLeave }) {
     startMediaAndSocket();
 
     return () => {
-      // Cleanup camera/mic media tracks, peer connections, and sockets on unmount
+      isCancelled = true;
+      if (socketInstance) {
+        socketInstance.off('receive-chat');
+        socketInstance.disconnect();
+      }
+      if (socketRef.current) {
+        socketRef.current.off('receive-chat');
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
       if (localMediaStream) {
         localMediaStream.getTracks().forEach(track => {
           try { track.stop(); } catch (e) {}
@@ -455,56 +446,105 @@ export function LiveSession({ sessionId, onLeave }) {
       }
       stopAllMediaTracks();
       Object.values(peerConnectionsRef.current).forEach(pc => pc.close());
-      if (socketRef.current) socketRef.current.disconnect();
+      peerConnectionsRef.current = {};
     };
   }, [session]);
 
   // Helper: Create PeerConnection for Instructor sending stream
   const createPeerConnection = async (targetSocketId, stream) => {
+    if (peerConnectionsRef.current[targetSocketId]) {
+      try {
+        peerConnectionsRef.current[targetSocketId].close();
+      } catch (e) {}
+    }
+
     const pc = new RTCPeerConnection(ICE_SERVERS);
     peerConnectionsRef.current[targetSocketId] = pc;
 
     if (stream) {
-      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+      stream.getTracks().forEach(track => {
+        try {
+          pc.addTrack(track, stream);
+        } catch (e) {
+          console.warn('Error adding track to peer connection:', e);
+        }
+      });
     }
 
     pc.onicecandidate = (event) => {
       if (event.candidate && socketRef.current) {
         socketRef.current.emit('ice-candidate', {
           targetSocketId,
-          candidate: event.candidate
+          candidate: event.candidate.toJSON ? event.candidate.toJSON() : event.candidate
         });
       }
     };
 
-    // Connection Recovery & Reconnect handling
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
-        console.warn(`ICE state ${pc.iceConnectionState} for peer ${targetSocketId}, attempting restart...`);
+      console.log(`Instructor ICE state for peer ${targetSocketId}:`, pc.iceConnectionState);
+      if (pc.iceConnectionState === 'failed') {
+        console.warn(`ICE failed for peer ${targetSocketId}, attempting restart...`);
         pc.restartIce();
       }
     };
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    if (socketRef.current) {
-      socketRef.current.emit('signal-offer', { targetSocketId, sdp: offer });
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      if (socketRef.current) {
+        socketRef.current.emit('signal-offer', { targetSocketId, sdp: offer });
+        console.log('📤 Instructor sent SDP offer to', targetSocketId);
+      }
+    } catch (offerCreateErr) {
+      console.error('Error creating offer for peer:', offerCreateErr);
     }
     return pc;
   };
 
   // Helper: Create PeerConnection for Student receiving stream
   const createStudentPeerConnection = (senderSocketId) => {
+    if (peerConnectionsRef.current[senderSocketId]) {
+      try {
+        peerConnectionsRef.current[senderSocketId].close();
+      } catch (e) {}
+    }
+
     const pc = new RTCPeerConnection(ICE_SERVERS);
     peerConnectionsRef.current[senderSocketId] = pc;
 
+    // Explicitly add transceivers to receive video and audio
+    try {
+      pc.addTransceiver('video', { direction: 'recvonly' });
+      pc.addTransceiver('audio', { direction: 'recvonly' });
+    } catch (e) {
+      console.warn('Transceiver add warning:', e);
+    }
+
     pc.ontrack = (event) => {
-      if (event.streams && event.streams[0]) {
-        setRemoteStream(event.streams[0]);
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = event.streams[0];
-          remoteVideoRef.current.play().catch((err) => console.log('Autoplay play error:', err));
+      console.log('🎥 Student received track:', event.track.kind, event.streams);
+      let stream = event.streams && event.streams[0];
+      if (!stream) {
+        if (!remoteStreamRef.current) {
+          remoteStreamRef.current = new MediaStream();
         }
+        remoteStreamRef.current.addTrack(event.track);
+        stream = remoteStreamRef.current;
+      } else {
+        remoteStreamRef.current = stream;
+      }
+
+      setRemoteStream(stream);
+
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = stream;
+        remoteVideoRef.current.play().catch((err) => {
+          console.warn('Autoplay prevented in ontrack, muting to allow instant playback:', err);
+          setIsStudentMuted(true);
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.muted = true;
+            remoteVideoRef.current.play().catch(e => console.error('Play retry error:', e));
+          }
+        });
       }
     };
 
@@ -512,14 +552,15 @@ export function LiveSession({ sessionId, onLeave }) {
       if (event.candidate && socketRef.current) {
         socketRef.current.emit('ice-candidate', {
           targetSocketId: senderSocketId,
-          candidate: event.candidate
+          candidate: event.candidate.toJSON ? event.candidate.toJSON() : event.candidate
         });
       }
     };
 
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
-        console.warn(`Student ICE state ${pc.iceConnectionState}, attempting restart...`);
+      console.log(`Student ICE state:`, pc.iceConnectionState);
+      if (pc.iceConnectionState === 'failed') {
+        console.warn(`Student ICE state failed, attempting restart...`);
         pc.restartIce();
       }
     };
@@ -603,15 +644,7 @@ export function LiveSession({ sessionId, onLeave }) {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // End Session (Instructor action)
-  const handleEndSession = async () => {
-    try {
-      await apiRequest(`/api/sessions/${sessionId}/end`, { method: 'POST' });
-      if (onLeave) onLeave();
-    } catch (err) {
-      alert(err.message || 'Failed to end session');
-    }
-  };
+
 
   if (loading) {
     return <div style={{ padding: '60px', textAlign: 'center', color: 'var(--text-muted)' }}>Loading live classroom environment...</div>;
@@ -657,23 +690,6 @@ export function LiveSession({ sessionId, onLeave }) {
               <Radio size={14} className="animate-pulse" /> LIVE STREAM
             </span>
 
-            {isRecording && (
-              <span style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '4px 10px',
-                background: 'rgba(239, 68, 68, 0.25)',
-                color: '#ef4444',
-                border: '1px solid rgba(239, 68, 68, 0.5)',
-                borderRadius: '9999px',
-                fontSize: '0.75rem',
-                fontWeight: 700
-              }}>
-                <Disc size={14} className="animate-pulse" /> REC {formatTimer(recordingSec)}
-              </span>
-            )}
-
             <h2 style={{ fontSize: '1.1rem', fontWeight: 700 }}>{session?.title}</h2>
           </div>
 
@@ -684,12 +700,11 @@ export function LiveSession({ sessionId, onLeave }) {
             
             {session?.isInstructor ? (
               <button 
-                onClick={handleEndSessionAndSaveVod} 
-                disabled={isUploadingVod}
+                onClick={handleEndSession} 
                 className="btn btn-danger" 
                 style={{ padding: '6px 14px', fontSize: '0.85rem', gap: '6px' }}
               >
-                <LogOut size={16} /> {isUploadingVod ? 'Ending & Saving VOD...' : 'End Live Stream'}
+                <LogOut size={16} /> End Live Stream
               </button>
             ) : (
               <button onClick={onLeave} className="btn btn-secondary" style={{ padding: '6px 14px', fontSize: '0.85rem' }}>
@@ -728,24 +743,78 @@ export function LiveSession({ sessionId, onLeave }) {
           ) : (
             // Student receiving remote video stream
             remoteStream ? (
-              <video 
-                ref={remoteVideoRef}
-                autoPlay 
-                playsInline 
-                style={{
-                  width: '100%',
-                  maxHeight: '100%',
-                  borderRadius: '12px',
-                  objectFit: 'contain',
-                  background: '#111827',
-                  boxShadow: '0 10px 30px rgba(0,0,0,0.8)'
-                }}
-              />
+              <div style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <video 
+                  ref={(el) => {
+                    remoteVideoRef.current = el;
+                    if (el && remoteStream && el.srcObject !== remoteStream) {
+                      el.srcObject = remoteStream;
+                      el.play().catch(err => {
+                        console.warn('Autoplay blocked in ref callback, muting to allow video render:', err);
+                        setIsStudentMuted(true);
+                        el.muted = true;
+                        el.play().catch(e => console.error('Play retry error:', e));
+                      });
+                    }
+                  }}
+                  autoPlay 
+                  playsInline 
+                  muted={isStudentMuted}
+                  style={{
+                    width: '100%',
+                    maxHeight: '100%',
+                    borderRadius: '12px',
+                    objectFit: 'contain',
+                    background: '#111827',
+                    boxShadow: '0 10px 30px rgba(0,0,0,0.8)'
+                  }}
+                />
+
+                {isStudentMuted && (
+                  <button 
+                    onClick={() => {
+                      setIsStudentMuted(false);
+                      if (remoteVideoRef.current) {
+                        remoteVideoRef.current.muted = false;
+                        remoteVideoRef.current.play().catch(() => {});
+                      }
+                    }}
+                    style={{
+                      position: 'absolute',
+                      bottom: '24px',
+                      left: '24px',
+                      background: 'rgba(0, 0, 0, 0.85)',
+                      backdropFilter: 'blur(8px)',
+                      border: '1px solid rgba(255, 255, 255, 0.25)',
+                      color: '#fff',
+                      padding: '8px 16px',
+                      borderRadius: '24px',
+                      fontSize: '0.85rem',
+                      fontWeight: 600,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: 'pointer',
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+                      zIndex: 10
+                    }}
+                  >
+                    <MicOff size={16} color="#f43f5e" /> Audio Muted (Click to Unmute)
+                  </button>
+                )}
+              </div>
             ) : (
               <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
                 <Video size={48} style={{ marginBottom: '12px', opacity: 0.4 }} />
                 <h3>Waiting for Instructor's Live Stream...</h3>
                 <p style={{ fontSize: '0.85rem', marginTop: '6px' }}>WebRTC Peer connection is negotiating via Socket.IO signaling</p>
+                <button 
+                  onClick={handleRequestStream}
+                  className="btn btn-secondary"
+                  style={{ marginTop: '16px', fontSize: '0.85rem', padding: '8px 18px', gap: '6px' }}
+                >
+                  <RefreshCw size={14} /> Request / Refresh Stream
+                </button>
               </div>
             )
           )}
@@ -781,7 +850,7 @@ export function LiveSession({ sessionId, onLeave }) {
           justifyContent: 'center',
           gap: '16px'
         }}>
-          {session?.isInstructor && (
+          {session?.isInstructor ? (
             <>
               <button 
                 onClick={toggleMic} 
@@ -810,6 +879,34 @@ export function LiveSession({ sessionId, onLeave }) {
                 <Monitor size={20} />
               </button>
             </>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <button 
+                onClick={() => {
+                  const newMuted = !isStudentMuted;
+                  setIsStudentMuted(newMuted);
+                  if (remoteVideoRef.current) {
+                    remoteVideoRef.current.muted = newMuted;
+                    if (!newMuted) remoteVideoRef.current.play().catch(() => {});
+                  }
+                }}
+                className={`btn ${isStudentMuted ? 'btn-danger' : 'btn-secondary'}`}
+                style={{ gap: '8px', fontSize: '0.85rem' }}
+                title={isStudentMuted ? 'Unmute Live Audio' : 'Mute Live Audio'}
+              >
+                {isStudentMuted ? <MicOff size={16} /> : <Mic size={16} />}
+                {isStudentMuted ? 'Stream Muted' : 'Audio On'}
+              </button>
+
+              <button 
+                onClick={handleRequestStream}
+                className="btn btn-secondary"
+                style={{ gap: '8px', fontSize: '0.85rem' }}
+                title="Refresh WebRTC live stream connection"
+              >
+                <RefreshCw size={16} /> Refresh Stream
+              </button>
+            </div>
           )}
         </div>
       </div>

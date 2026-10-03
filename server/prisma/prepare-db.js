@@ -48,7 +48,7 @@ try {
   // Push schema to DB if --push flag is passed (e.g. docker startup, setup)
   if (process.argv.includes('--push')) {
     console.log(`🚀 Synchronizing schema with ${targetProvider.toUpperCase()} database ("prisma db push")...`);
-    execSync('npx prisma db push --skip-generate', {
+    execSync('npx prisma db push --accept-data-loss', {
       cwd: path.resolve(__dirname, '..'),
       stdio: 'inherit',
       env: process.env

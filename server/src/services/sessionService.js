@@ -48,7 +48,7 @@ export async function createSession({ classId, title, instructorId }) {
 export async function endSession({ sessionId, instructorId }) {
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
-    include: { class: true, videoRecording: true }
+    include: { class: true }
   });
 
   if (!session) {
@@ -71,22 +71,6 @@ export async function endSession({ sessionId, instructorId }) {
     }
   });
 
-  // Automatically create a VOD entry if no recording file was manually uploaded
-  if (!session.videoRecording) {
-    const durationSec = session.startedAt 
-      ? Math.max(1, Math.round((new Date() - new Date(session.startedAt)) / 1000))
-      : 300;
-
-    await prisma.videoRecording.create({
-      data: {
-        sessionId: session.id,
-        videoUrl: '/uploads/recordings/default_vod.webm',
-        fileSize: 1024 * 512,
-        durationSec
-      }
-    }).catch(err => console.log('Auto VOD record creation message:', err.message));
-  }
-
   return updatedSession;
 }
 
@@ -97,7 +81,7 @@ export async function getSessionById(sessionId, userId) {
       class: {
         include: {
           instructor: { select: { id: true, name: true, email: true } },
-          enrollments: { select: { studentId: true } }
+          enrollments: { select: { studentId: true, status: true } }
         }
       }
     }
@@ -110,10 +94,10 @@ export async function getSessionById(sessionId, userId) {
   }
 
   const isInstructor = session.class.instructorId === userId;
-  const isEnrolled = session.class.enrollments.some(e => e.studentId === userId);
+  const isEnrolled = session.class.enrollments.some(e => e.studentId === userId && e.status === 'APPROVED');
 
   if (!isInstructor && !isEnrolled) {
-    const error = new Error('Access denied. You are not enrolled in this class.');
+    const error = new Error('Access denied. You do not have approved enrollment in this class.');
     error.statusCode = 403;
     throw error;
   }

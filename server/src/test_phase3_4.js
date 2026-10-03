@@ -36,7 +36,7 @@ async function runPhase3And4Verification() {
       const studData = await studRes.json();
 
       // 2. Setup Class & Session
-      console.log('2️⃣ Setting up Class & Session...');
+      console.log('2️⃣ Setting up Class & Enrollment...');
       const classRes = await fetch(`${baseUrl}/api/classes`, {
         method: 'POST',
         headers: {
@@ -47,7 +47,7 @@ async function runPhase3And4Verification() {
       });
       const classData = await classRes.json();
 
-      await fetch(`${baseUrl}/api/classes/join`, {
+      const joinRes = await fetch(`${baseUrl}/api/classes/join`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -55,6 +55,14 @@ async function runPhase3And4Verification() {
         },
         body: JSON.stringify({ code: classData.class.code })
       });
+      const joinData = await joinRes.json();
+
+      // Instructor approves student enrollment
+      await fetch(`${baseUrl}/api/classes/${classData.class.id}/requests/${joinData.enrollment.id}/approve`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${instData.accessToken}` }
+      });
+      console.log('   Student join request approved.');
 
       const sessionRes = await fetch(`${baseUrl}/api/sessions`, {
         method: 'POST',
@@ -75,13 +83,35 @@ async function runPhase3And4Verification() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${studData.accessToken}`
         },
-        body: JSON.stringify({ durationSeconds: 1850 }) // ~30 minutes
+        body: JSON.stringify({ durationSeconds: 1850 }) // ~31 minutes
       });
       const attendData = await attendRes.json();
       console.log('   Attendance Logged Duration:', attendData.attendance.durationSeconds, 'seconds');
 
-      // 4. Test Instructor Analytics Dashboard API
-      console.log('4️⃣ Fetching Instructor Engagement & Watch Time Analytics...');
+      // 4. Instructor Ends Session
+      console.log('4️⃣ Instructor ending session to finalize previous class record...');
+      await fetch(`${baseUrl}/api/sessions/${session.id}/end`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${instData.accessToken}` }
+      });
+
+      // 5. Test Instructor Attendance History & Roster Verification API
+      console.log('5️⃣ Fetching Session-by-Session Attendance Tracker & Roster...');
+      const historyRes = await fetch(`${baseUrl}/api/classes/${classData.class.id}/attendance-history`, {
+        headers: { 'Authorization': `Bearer ${instData.accessToken}` }
+      });
+      const historyData = await historyRes.json();
+      console.log('   Tracked Sessions Count:', historyData.sessionHistory.length);
+      const trackedSession = historyData.sessionHistory[0];
+      console.log('   Session Title:', trackedSession.title, '| Status:', trackedSession.status);
+      console.log('   Attended Students:', trackedSession.attendedCount, '/', trackedSession.totalEnrolled);
+      console.log('   Student Attended Boolean:', trackedSession.roster[0].attended, '| Duration Min:', trackedSession.roster[0].durationMinutes);
+
+      if (trackedSession.attendedCount !== 1) throw new Error('Expected 1 attended student in attendance tracker');
+      if (trackedSession.roster[0].attended !== true) throw new Error('Expected student attended to be true');
+
+      // 6. Test Aggregate Analytics Endpoint
+      console.log('6️⃣ Fetching Class Engagement Aggregate Analytics...');
       const analyticsRes = await fetch(`${baseUrl}/api/classes/${classData.class.id}/analytics`, {
         headers: { 'Authorization': `Bearer ${instData.accessToken}` }
       });
@@ -90,7 +120,7 @@ async function runPhase3And4Verification() {
       console.log('   Student Watch Minutes:', analyticsData.analytics.studentAnalytics[0].totalWatchMinutes);
       console.log('   Student Attendance Rate:', analyticsData.analytics.studentAnalytics[0].attendanceRate + '%');
 
-      console.log('\n✅ ALL PHASE 3 & 4 INTEGRATION TESTS PASSED PERFECTLY!\n');
+      console.log('\n✅ ALL PHASE 3 & 4 (ATTENDANCE & ANALYTICS) INTEGRATION TESTS PASSED PERFECTLY!\n');
     } catch (err) {
       console.error('❌ Phase 3 & 4 test failed:', err);
       process.exitCode = 1;

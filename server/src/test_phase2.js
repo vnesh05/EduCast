@@ -54,7 +54,7 @@ async function runPhase2Verification() {
       });
       const classData = await classRes.json();
 
-      await fetch(`${baseUrl}/api/classes/join`, {
+      const joinRes = await fetch(`${baseUrl}/api/classes/join`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -62,6 +62,14 @@ async function runPhase2Verification() {
         },
         body: JSON.stringify({ code: classData.class.code })
       });
+      const joinData = await joinRes.json();
+
+      // Instructor approves the student enrollment
+      await fetch(`${baseUrl}/api/classes/${classData.class.id}/requests/${joinData.enrollment.id}/approve`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${instData.accessToken}` }
+      });
+      console.log('   Student join request approved by instructor.');
 
       // 3. Instructor Starts Live Session
       console.log('3️⃣ Instructor starting live session via REST API...');
@@ -118,16 +126,75 @@ async function runPhase2Verification() {
       const chatResult = await chatPromise;
       if (!chatResult || !chatResult.id) throw new Error('Chat broadcast failed');
 
-      // 6. Verify REST Chat History Endpoint
-      console.log('6️⃣ Verifying Chat History Endpoint from Database...');
+      // 6. Verify WebRTC Signaling Relay (request-stream, offer, answer, ice-candidate)
+      console.log('6️⃣ Testing WebRTC Signaling Relay (request-stream, offer, answer, ICE)...');
+      const signalingPromise = new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Signaling handshake timed out')), 5000);
+
+        // Instructor listens for request-stream from student
+        instSocket.on('request-stream', ({ studentSocketId }) => {
+          console.log('   [Signaling] Instructor received stream request from student socket:', studentSocketId);
+          // Instructor sends offer
+          instSocket.emit('signal-offer', {
+            targetSocketId: studentSocketId,
+            sdp: { type: 'offer', sdp: 'v=0\r\no=instructor 123 456 IN IP4 127.0.0.1\r\ns=Live\r\nt=0 0\r\n' }
+          });
+        });
+
+        // Student listens for offer
+        studSocket.on('receive-offer', ({ senderSocketId, sdp }) => {
+          console.log('   [Signaling] Student received offer from instructor');
+          // Student sends answer
+          studSocket.emit('signal-answer', {
+            targetSocketId: senderSocketId,
+            sdp: { type: 'answer', sdp: 'v=0\r\no=student 789 101 IN IP4 127.0.0.1\r\ns=Live\r\nt=0 0\r\n' }
+          });
+          // Student sends candidate
+          studSocket.emit('ice-candidate', {
+            targetSocketId: senderSocketId,
+            candidate: { candidate: 'candidate:1 1 UDP 2130706431 127.0.0.1 50000 typ host', sdpMid: '0', sdpMLineIndex: 0 }
+          });
+        });
+
+        // Instructor receives answer
+        let gotAnswer = false;
+        let gotCandidate = false;
+
+        instSocket.on('receive-answer', () => {
+          console.log('   [Signaling] Instructor received answer from student');
+          gotAnswer = true;
+          if (gotAnswer && gotCandidate) {
+            clearTimeout(timeout);
+            resolve();
+          }
+        });
+
+        instSocket.on('receive-candidate', () => {
+          console.log('   [Signaling] Instructor received ICE candidate from student');
+          gotCandidate = true;
+          if (gotAnswer && gotCandidate) {
+            clearTimeout(timeout);
+            resolve();
+          }
+        });
+
+        // Student triggers handshake by requesting stream
+        studSocket.emit('request-stream', { sessionId: session.id });
+      });
+
+      await signalingPromise;
+      console.log('   WebRTC Signaling Handshake completed successfully!');
+
+      // 7. Verify REST Chat History Endpoint
+      console.log('7️⃣ Verifying Chat History Endpoint from Database...');
       const historyRes = await fetch(`${baseUrl}/api/sessions/${session.id}/chat`, {
         headers: { 'Authorization': `Bearer ${instData.accessToken}` }
       });
       const historyData = await historyRes.json();
       console.log('   DB Messages retrieved:', historyData.messages.length);
 
-      // 7. Instructor Ends Session
-      console.log('7️⃣ Instructor ending session...');
+      // 8. Instructor Ends Session
+      console.log('8️⃣ Instructor ending session...');
       const endRes = await fetch(`${baseUrl}/api/sessions/${session.id}/end`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${instData.accessToken}` }

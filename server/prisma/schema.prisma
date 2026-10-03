@@ -53,34 +53,24 @@ model Enrollment {
   class      Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
   studentId  String
   student    User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  status     String   @default("PENDING") // PENDING | APPROVED | REJECTED
   enrolledAt DateTime @default(now())
 
   @@unique([classId, studentId])
 }
 
 model Session {
-  id             String          @id @default(uuid())
-  classId        String
-  class          Class           @relation(fields: [classId], references: [id], onDelete: Cascade)
-  title          String
-  status         String          @default("SCHEDULED") // SCHEDULED | LIVE | ENDED
-  startedAt      DateTime?
-  endedAt        DateTime?
-  createdAt      DateTime        @default(now())
+  id           String        @id @default(uuid())
+  classId      String
+  class        Class         @relation(fields: [classId], references: [id], onDelete: Cascade)
+  title        String
+  status       String        @default("SCHEDULED") // SCHEDULED | LIVE | ENDED
+  startedAt    DateTime?
+  endedAt      DateTime?
+  createdAt    DateTime      @default(now())
 
-  attendance     Attendance[]
-  chatMessages   ChatMessage[]
-  videoRecording VideoRecording?
-}
-
-model VideoRecording {
-  id          String   @id @default(uuid())
-  sessionId   String   @unique
-  session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  videoUrl    String
-  fileSize    Int      @default(0)
-  durationSec Int      @default(0)
-  createdAt   DateTime @default(now())
+  attendance   Attendance[]
+  chatMessages ChatMessage[]
 }
 
 model ChatMessage {

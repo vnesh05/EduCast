@@ -75,18 +75,48 @@ async function runPhase1Verification() {
         body: JSON.stringify({ code: createdClass.code })
       });
       const joinData = await joinRes.json();
-      console.log('   Join Result:', joinData.message);
+      console.log('   Join Result:', joinData.message, '| Status:', joinData.status);
+      if (joinData.status !== 'PENDING') throw new Error(`Expected PENDING status, got ${joinData.status}`);
 
-      // 6. Get Class Details
-      console.log('6️⃣ Fetching Class Details...');
+      // 6. Student Attempts to Fetch Class Details Before Approval (Should be 403 Forbidden)
+      console.log('6️⃣ Verifying Student cannot access class details while PENDING...');
+      const forbiddenRes = await fetch(`${baseUrl}/api/classes/${createdClass.id}`, {
+        headers: { 'Authorization': `Bearer ${studToken}` }
+      });
+      console.log('   Access Status (Expected 403):', forbiddenRes.status);
+      if (forbiddenRes.status !== 403) throw new Error(`Expected 403 Forbidden, got ${forbiddenRes.status}`);
+
+      // 7. Instructor Fetches Pending Requests
+      console.log('7️⃣ Instructor checking pending join requests...');
+      const requestsRes = await fetch(`${baseUrl}/api/classes/${createdClass.id}/requests`, {
+        headers: { 'Authorization': `Bearer ${instToken}` }
+      });
+      const requestsData = await requestsRes.json();
+      console.log('   Pending requests count:', requestsData.requests.length);
+      const studentReq = requestsData.requests.find(r => r.studentId === studData.user.id);
+      if (!studentReq) throw new Error('Student request not found in pending queue');
+
+      // 8. Instructor Approves Student Request
+      console.log('8️⃣ Instructor approving student join request...');
+      const approveRes = await fetch(`${baseUrl}/api/classes/${createdClass.id}/requests/${studentReq.id}/approve`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${instToken}` }
+      });
+      const approveData = await approveRes.json();
+      console.log('   Approval Result:', approveData.message, '| Enrollment Status:', approveData.enrollment.status);
+      if (approveData.enrollment.status !== 'APPROVED') throw new Error('Enrollment was not approved');
+
+      // 9. Student Fetches Class Details Post-Approval (Should Succeed 200)
+      console.log('9️⃣ Student fetching class details after approval...');
       const detailRes = await fetch(`${baseUrl}/api/classes/${createdClass.id}`, {
         headers: { 'Authorization': `Bearer ${studToken}` }
       });
       const detailData = await detailRes.json();
-      console.log('   Enrolled Students Count:', detailData.class._count.enrollments);
+      console.log('   Access Status:', detailRes.status, '| Approved Enrolled Students:', detailData.class._count.enrollments);
+      if (detailRes.status !== 200) throw new Error(`Expected 200 OK post-approval, got ${detailRes.status}`);
 
-      // 7. Refresh Token Test
-      console.log('7️⃣ Testing Refresh Token Rotation...');
+      // 10. Refresh Token Test
+      console.log('🔟 Testing Refresh Token Rotation...');
       const refreshRes = await fetch(`${baseUrl}/api/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -95,7 +125,7 @@ async function runPhase1Verification() {
       const refreshData = await refreshRes.json();
       console.log('   New Access Token Generated successfully:', !!refreshData.accessToken);
 
-      console.log('\n✅ ALL PHASE 1 INTEGRATION TESTS PASSED PERFECTLY!\n');
+      console.log('\n✅ ALL PHASE 1 INTEGRATION TESTS (INCLUDING APPROVAL WORKFLOW) PASSED PERFECTLY!\n');
     } catch (err) {
       console.error('❌ Test failed:', err);
       process.exitCode = 1;

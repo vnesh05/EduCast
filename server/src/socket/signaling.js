@@ -98,6 +98,15 @@ export function initSocketServer(httpServer, corsOrigin) {
       console.log(`👤 ${socket.user.name} joined room ${roomName}`);
     });
 
+    // WebRTC Signaling: Student requests live stream
+    socket.on('request-stream', ({ sessionId }) => {
+      const roomName = `session:${sessionId}`;
+      socket.to(roomName).emit('request-stream', {
+        studentSocketId: socket.id,
+        user: socket.user
+      });
+    });
+
     // WebRTC Signaling: Relay Offer
     socket.on('signal-offer', ({ targetSocketId, sdp }) => {
       io.to(targetSocketId).emit('receive-offer', {
