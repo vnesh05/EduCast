@@ -5,7 +5,7 @@
   "description": "EduCast — Live Classroom & Streaming Platform",
   "scripts": {
     "setup": "npm run setup:server && npm run setup:client",
-    "setup:server": "cd server && npm install && npx prisma db push",
+    "setup:server": "cd server && npm install && npm run db:push",
     "setup:client": "cd client && npm install",
     "dev:server": "cd server && npm run dev",
     "dev:client": "cd client && npm run dev"

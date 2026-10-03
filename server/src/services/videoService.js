@@ -185,8 +185,8 @@ export async function getClassAnalytics(classId, instructorId) {
       });
 
       const totalWatchSec = attendances.reduce((acc, a) => acc + (a.durationSeconds || 0), 0);
-      const sessionsAttended = attendances.length;
-      const attendanceRate = totalSessions > 0 ? Math.round((sessionsAttended / totalSessions) * 100) : 0;
+      const sessionsAttended = new Set(attendances.map(a => a.sessionId)).size;
+      const attendanceRate = totalSessions > 0 ? Math.min(100, Math.round((sessionsAttended / totalSessions) * 100)) : 0;
 
       return {
         student: enr.student,

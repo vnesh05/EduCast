@@ -266,6 +266,33 @@ export function LiveSession({ sessionId, onLeave }) {
     initSession();
   }, [sessionId]);
 
+  // Student Attendance & Watch-Time Tracking
+  useEffect(() => {
+    if (!session || session.isInstructor) return;
+
+    // Initial check-in ping
+    apiRequest(`/api/sessions/${sessionId}/attendance`, {
+      method: 'POST',
+      body: JSON.stringify({ durationSeconds: 10 })
+    }).catch(() => {});
+
+    // Periodic attendance interval
+    const interval = setInterval(async () => {
+      try {
+        await apiRequest(`/api/sessions/${sessionId}/attendance`, {
+          method: 'POST',
+          body: JSON.stringify({ durationSeconds: 30 })
+        });
+      } catch (e) {
+        console.warn('Attendance ping error:', e.message);
+      }
+    }, 30000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [session, sessionId]);
+
   // Helper: Flush queued ICE candidates when remote description is ready
   const processPendingCandidates = async (socketId, pc) => {
     if (pendingCandidatesRef.current[socketId]) {

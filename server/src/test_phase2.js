@@ -142,10 +142,11 @@ async function runPhase2Verification() {
       console.log('\n✅ ALL PHASE 2 INTEGRATION TESTS PASSED PERFECTLY!\n');
     } catch (err) {
       console.error('❌ Phase 2 test failed:', err);
+      process.exitCode = 1;
     } finally {
       await prisma.$disconnect();
       httpServer.close();
-      process.exit(0);
+      process.exit(process.exitCode || 0);
     }
   });
 }

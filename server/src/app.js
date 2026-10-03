@@ -10,8 +10,12 @@ import { errorHandler } from './middlewares/errorHandler.js';
 
 const app = express();
 
+const allowedOrigins = CORS_ORIGIN && CORS_ORIGIN.includes(',')
+  ? CORS_ORIGIN.split(',').map(o => o.trim())
+  : CORS_ORIGIN;
+
 app.use(cors({
-  origin: CORS_ORIGIN,
+  origin: allowedOrigins,
   credentials: true
 }));
 

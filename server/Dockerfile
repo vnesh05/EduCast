@@ -1,5 +1,7 @@
 FROM node:22-slim
 
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Install dependencies
@@ -18,4 +20,5 @@ EXPOSE 5000
 ENV NODE_ENV=production
 ENV PORT=5000
 
-CMD ["node", "src/index.js"]
+CMD ["npm", "start"]
+

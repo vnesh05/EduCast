@@ -2,10 +2,16 @@ import { Server } from 'socket.io';
 import { verifyAccessToken } from '../utils/tokens.js';
 import { saveChatMessage, endSession } from '../services/sessionService.js';
 
+const disconnectTimers = new Map();
+
 export function initSocketServer(httpServer, corsOrigin) {
+  const allowedOrigins = corsOrigin && corsOrigin.includes(',')
+    ? corsOrigin.split(',').map(o => o.trim())
+    : (corsOrigin || '*');
+
   const io = new Server(httpServer, {
     cors: {
-      origin: corsOrigin || '*',
+      origin: allowedOrigins,
       methods: ['GET', 'POST'],
       credentials: true
     }
@@ -53,6 +59,12 @@ export function initSocketServer(httpServer, corsOrigin) {
       socket.join(roomName);
       socket.currentRoom = roomName;
       socket.currentSessionId = sessionId;
+
+      // Cancel any pending disconnect auto-end timer if instructor rejoined
+      if (socket.user?.role === 'INSTRUCTOR' && disconnectTimers.has(sessionId)) {
+        clearTimeout(disconnectTimers.get(sessionId));
+        disconnectTimers.delete(sessionId);
+      }
 
       // Get all other connected sockets in this room
       const roomSockets = io.sockets.adapter.rooms.get(roomName);
@@ -132,22 +144,47 @@ export function initSocketServer(httpServer, corsOrigin) {
     socket.on('disconnect', async () => {
       if (socket.currentRoom) {
         const room = socket.currentRoom;
+        const sessionId = socket.currentSessionId;
+        const instructorId = socket.user?.userId;
 
-        // If instructor disconnected, auto-end the live session in DB & notify clients
-        if (socket.currentSessionId && socket.user?.role === 'INSTRUCTOR') {
-          console.log(`🎬 Instructor disconnected. Auto-ending session ${socket.currentSessionId}...`);
-          try {
-            await endSession({
-              sessionId: socket.currentSessionId,
-              instructorId: socket.user.userId
-            });
-            io.in(room).emit('session-ended', {
-              sessionId: socket.currentSessionId,
-              reason: 'Presenter disconnected or ended stream'
-            });
-          } catch (e) {
-            console.error('Error ending session on instructor disconnect:', e.message);
+        // If instructor disconnected, provide 15s grace period before auto-ending to accommodate page reloads
+        if (sessionId && socket.user?.role === 'INSTRUCTOR') {
+          if (disconnectTimers.has(sessionId)) {
+            clearTimeout(disconnectTimers.get(sessionId));
           }
+
+          const timer = setTimeout(async () => {
+            disconnectTimers.delete(sessionId);
+            const roomSockets = io.sockets.adapter.rooms.get(room);
+            let instructorReconnected = false;
+            if (roomSockets) {
+              for (const id of roomSockets) {
+                const s = io.sockets.sockets.get(id);
+                if (s?.user?.userId === instructorId) {
+                  instructorReconnected = true;
+                  break;
+                }
+              }
+            }
+
+            if (!instructorReconnected) {
+              console.log(`🎬 Instructor disconnected. Auto-ending session ${sessionId}...`);
+              try {
+                await endSession({
+                  sessionId,
+                  instructorId
+                });
+                io.in(room).emit('session-ended', {
+                  sessionId,
+                  reason: 'Presenter disconnected or ended stream'
+                });
+              } catch (e) {
+                console.error('Error ending session on instructor disconnect:', e.message);
+              }
+            }
+          }, 15000);
+
+          disconnectTimers.set(sessionId, timer);
         }
 
         socket.to(room).emit('user-left', {

@@ -5,9 +5,11 @@
   "main": "src/index.js",
   "type": "module",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "nodemon src/index.js",
-    "db:push": "prisma db push",
+    "start": "node prisma/prepare-db.js --push && node src/index.js",
+    "dev": "node prisma/prepare-db.js && nodemon src/index.js",
+    "db:prepare": "node prisma/prepare-db.js",
+    "db:push": "node prisma/prepare-db.js --push",
+    "db:generate": "node prisma/prepare-db.js --generate",
     "db:studio": "prisma studio"
   },
   "dependencies": {

@@ -30,6 +30,34 @@ export function VideoPlayer({ recordingId, onBack }) {
     fetchRecording();
   }, [recordingId]);
 
+  // Log attendance watch-time for recorded sessions
+  useEffect(() => {
+    if (!recording?.session?.id) return;
+    const sessionId = recording.session.id;
+
+    // Initial ping
+    apiRequest(`/api/sessions/${sessionId}/attendance`, {
+      method: 'POST',
+      body: JSON.stringify({ durationSeconds: 15 })
+    }).catch(() => {});
+
+    // Periodic watch-time ping
+    const interval = setInterval(async () => {
+      try {
+        await apiRequest(`/api/sessions/${sessionId}/attendance`, {
+          method: 'POST',
+          body: JSON.stringify({ durationSeconds: 30 })
+        });
+      } catch (e) {
+        // Silently ignore ping failures
+      }
+    }, 30000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [recording]);
+
   if (loading) {
     return <div style={{ padding: '60px', textAlign: 'center', color: 'var(--text-muted)' }}>Loading video recording...</div>;
   }

@@ -98,10 +98,11 @@ async function runPhase1Verification() {
       console.log('\n✅ ALL PHASE 1 INTEGRATION TESTS PASSED PERFECTLY!\n');
     } catch (err) {
       console.error('❌ Test failed:', err);
+      process.exitCode = 1;
     } finally {
       await prisma.$disconnect();
       server.close();
-      process.exit(0);
+      process.exit(process.exitCode || 0);
     }
   });
 }

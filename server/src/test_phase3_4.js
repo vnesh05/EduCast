@@ -93,10 +93,11 @@ async function runPhase3And4Verification() {
       console.log('\n✅ ALL PHASE 3 & 4 INTEGRATION TESTS PASSED PERFECTLY!\n');
     } catch (err) {
       console.error('❌ Phase 3 & 4 test failed:', err);
+      process.exitCode = 1;
     } finally {
       await prisma.$disconnect();
       server.close();
-      process.exit(0);
+      process.exit(process.exitCode || 0);
     }
   });
 }

@@ -106,7 +106,6 @@ export async function joinClassByCode({ code, studentId }) {
 
   if (!targetClass) {
     const error = new Error('Invalid class code. No class found.');
-    error.statusCode = 444;
     error.statusCode = 404;
     throw error;
   }
